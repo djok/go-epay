@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  goepay:
+    build: .
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      - PORT=8090
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Cloudflare Tunnel for secure external access
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - goepay
+    restart: unless-stopped
+
+  # Optional: Datastore emulator for UCRM PaymentOrder storage
+  # Use with: docker-compose --profile with-datastore up
+  datastore-emulator:
+    image: google/cloud-sdk:latest
+    command: >
+      gcloud beta emulators datastore start
+      --host-port=0.0.0.0:8081
+      --project=docker-local
+      --no-store-on-disk
+    ports:
+      - "8081:8081"
+    profiles:
+      - with-datastore

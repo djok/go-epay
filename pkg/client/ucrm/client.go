@@ -201,20 +201,45 @@ func (c *client) PayPaymentOrder(ctx context.Context, orderID string) (*epay.Pay
 }
 
 func (c *client) findClientID(ctx context.Context, subscriberID string) (*clientRef, error) {
+	contextLogger := log.WithContext(ctx)
 	params := url.Values{}
-	params.Add("userIdent", subscriberID)
-	params.Add("organizationId", c.paymentProvider.OrganizationID)
+
+	// Determine search type based on IDN format
+	if len(subscriberID) == 7 {
+		// 7 digits - check Luhn checksum
+		if epay.IsContractCode(subscriberID) {
+			// Valid Contract Code → search by Contract ID using query
+			params.Add("query", subscriberID)
+			contextLogger.Infof("searching by Contract ID (query): %s", subscriberID)
+		} else {
+			// Invalid Luhn checksum → subscriber not found
+			contextLogger.Debugf("invalid Luhn checksum for 7-digit IDN: %s", subscriberID)
+			return nil, epay.ErrSubscriberNotFound
+		}
+	} else {
+		// Other length → search by User ID using userIdent
+		params.Add("userIdent", subscriberID)
+		contextLogger.Debugf("searching by User ID (userIdent): %s", subscriberID)
+	}
+
+	if c.paymentProvider.OrganizationID != "" {
+		params.Add("organizationId", c.paymentProvider.OrganizationID)
+	}
 
 	req, err := c.newRequest(ctx, "GET", "/api/v1.0/clients", params)
 	if err != nil {
 		return nil, fmt.Errorf("could not create request due: %v", err)
 	}
 
+	contextLogger.Infof("UCRM client search URL: %s", req.URL.String())
+
 	var clients []clientRef
 	resp, err := c.do(req, &clients)
 	if err != nil {
 		return nil, fmt.Errorf("could not process get subscriber duties request due: %v", err)
 	}
+
+	contextLogger.Infof("UCRM client search response: status=%d, clients found=%d", resp.StatusCode, len(clients))
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("got bad response due: %v", err)
@@ -223,6 +248,7 @@ func (c *client) findClientID(ctx context.Context, subscriberID string) (*client
 		return nil, epay.ErrSubscriberNotFound
 	}
 
+	contextLogger.Debugf("found client: id=%d, firstName=%s, lastName=%s", clients[0].ID, clients[0].FirstName, clients[0].LastName)
 	return &clients[0], nil
 }
 

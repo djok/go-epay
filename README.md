@@ -1,29 +1,65 @@
 ## go-epay
 A generic ePay integration in Go
 
-### Supported Modules
- * TelcoNG 
-   An integration with the online payment processor of TelcoNG by using go-epay and telcong-epay-adapter. The first 
-   one could be deployed on GAE whether the second one could be deployed on any environment. Note that the  billing-key-file
-   should be issued from the administrative IAM panel of the platform.
+### Supported Billing Systems
+ * **TelcoNG** - Integration with the online payment processor of TelcoNG
+ * **UCRM/UISP** - Integration with Ubiquiti's UCRM/UISP billing system
+
+### Deployment Options
+
+#### Docker (Recommended)
+```bash
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# Start the service
+docker-compose up -d
+```
+
+#### Google App Engine
+Deploy to GAE with configuration stored in Datastore.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `BILLING_SYSTEM` | `telcong` or `ucrm` - which billing system to use |
+| `EPAY_SECRET` | ePay HMAC secret for request validation |
+| `EPAY_MERCHANT_ID` | ePay merchant ID |
+| `TELCONG_BILLING_URL` | TelcoNG API URL (if using TelcoNG) |
+| `TELCONG_JWT_KEY` | TelcoNG JWT key JSON (if using TelcoNG) |
+| `UCRM_BILLING_URL` | UCRM/UISP API URL (if using UCRM) |
+| `UCRM_API_KEY` | UCRM/UISP API key (if using UCRM) |
+| `UCRM_METHOD_ID` | UCRM payment method ID |
+| `UCRM_PROVIDER_NAME` | Provider name for UCRM payments |
+| `UCRM_ORGANIZATION_ID` | UCRM organization ID (optional) |
+
+### UCRM/UISP Client Lookup
+
+The system supports two types of subscriber identifiers (IDN):
+
+| IDN Format | Search Method | API Parameter |
+|------------|---------------|---------------|
+| 7 digits with valid Luhn checksum | Contract ID | `?query=IDN` |
+| 7 digits with invalid Luhn | Error: not found | - |
+| Other lengths | User ID | `?userIdent=IDN` |
 
 ### Architecture
 ![Architecture](docs/architecture.png)
 
-### Building telcong-epay-adapter (Uses TCP)
+### Building
 
-```sh
-go get github.com/clouway/go-epay
+```bash
+# Build
+go build ./cmd/goepay
 
-cd $GOPATH/src/github.com/clouway/go-epay/
-make test
-make install
-
-telcong-epay-adapter --help
+# Run tests
+go test ./...
 ```
 
 ### Requirements
- * Go 1.8.x or greater
+ * Go 1.19 or greater
 
 ### License
 Copyright 2018 clouWay ood.

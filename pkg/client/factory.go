@@ -3,8 +3,6 @@ package client
 import (
 	"context"
 	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/clouway/go-epay/pkg/client/telcong"
 	"github.com/clouway/go-epay/pkg/client/ucrm"
@@ -14,93 +12,100 @@ import (
 	"cloud.google.com/go/datastore"
 )
 
+// BillingSystem represents the billing system type
+type BillingSystem string
+
+const (
+	// BillingSystemTelcoNG represents the TelcoNG billing system
+	BillingSystemTelcoNG BillingSystem = "telcong"
+	// BillingSystemUCRM represents the UCRM billing system
+	BillingSystemUCRM BillingSystem = "ucrm"
+)
+
 // NewClientFactory creates a new Factory for Client creation.
+// This is the legacy constructor for GAE deployments that uses automatic
+// billing system detection based on IDN format.
 func NewClientFactory(dClient *datastore.Client) epay.ClientFactory {
-	return &clientFactory{dClient}
+	return &clientFactory{dClient: dClient}
+}
+
+// NewClientFactoryWithBillingSystem creates a new Factory that uses the specified
+// billing system for all requests. This is used for Docker deployments where the
+// billing system is configured via environment variables.
+func NewClientFactoryWithBillingSystem(dClient *datastore.Client, billingSystem BillingSystem) epay.ClientFactory {
+	return &clientFactory{
+		dClient:       dClient,
+		billingSystem: billingSystem,
+	}
 }
 
 type clientFactory struct {
-	dClient *datastore.Client
+	dClient       *datastore.Client
+	billingSystem BillingSystem
 }
 
 func (c *clientFactory) Create(ctx context.Context, env epay.Environment, idn string) epay.Client {
+	// Determine which billing system to use
+	useTelcoNG := c.shouldUseTelcoNG(env, idn)
+
+	if useTelcoNG {
+		return c.createTelcoNGClient(ctx, env)
+	}
+	return c.createUCRMClient(env)
+}
+
+// shouldUseTelcoNG determines if TelcoNG should be used based on configuration
+func (c *clientFactory) shouldUseTelcoNG(env epay.Environment, idn string) bool {
+	// If billing system is explicitly set (Docker mode), use it
+	if c.billingSystem != "" {
+		return c.billingSystem == BillingSystemTelcoNG
+	}
+
+	// Legacy GAE mode: auto-detect based on IDN format and available config
+	if IsTelcoNGContractCode(idn) && env.BillingJWTKey != "" && env.BillingURL != "" {
+		return true
+	}
+
+	// If UCRM metadata is configured, use UCRM
+	if _, ok := env.Metadata["billingUrl"]; ok {
+		return false
+	}
+
+	// Default to TelcoNG
+	return true
+}
+
+// createTelcoNGClient creates a TelcoNG billing client
+func (c *clientFactory) createTelcoNGClient(ctx context.Context, env epay.Environment) epay.Client {
 	billingURL, _ := url.Parse(env.BillingURL)
-
-	if isTelcoNGContractCode(idn) && env.BillingJWTKey != "" && env.BillingURL != "" {
-		conf, _ := google.JWTConfigFromJSON([]byte(env.BillingJWTKey))
-		oauth2client := conf.Client(ctx)
-		return telcong.NewClient(oauth2client, billingURL)
-	}
-
-	if billingURL, ok := env.Metadata["billingUrl"]; ok {
-		billingURL, _ := url.Parse(billingURL)
-		apiKey := env.Metadata["apiKey"]
-		methodID := env.Metadata["methodId"]
-		providerName := env.Metadata["providerName"]
-		providerPaymentID := env.Metadata["providerPaymentId"]
-		providerPaymentTime := env.Metadata["providerPaymentTime"]
-		organizationID := env.Metadata["organizationId"]
-
-		return ucrm.NewClient(billingURL, apiKey, c.dClient, ucrm.PaymentProvider{
-			MethodID:       methodID,
-			Name:           providerName,
-			PaymentID:      providerPaymentID,
-			PaymentTime:    providerPaymentTime,
-			OrganizationID: organizationID,
-		})
-
-	}
-
-	// Default to telcong client
 	conf, _ := google.JWTConfigFromJSON([]byte(env.BillingJWTKey))
 	oauth2client := conf.Client(ctx)
 	return telcong.NewClient(oauth2client, billingURL)
 }
 
-// isTelcoNGContractCode validates the provided code using the checksum algorithm
-func isTelcoNGContractCode(code string) bool {
-	const length = 7
+// createUCRMClient creates a UCRM billing client
+func (c *clientFactory) createUCRMClient(env epay.Environment) epay.Client {
+	billingURLStr := env.Metadata["billingUrl"]
+	billingURL, _ := url.Parse(billingURLStr)
+	apiKey := env.Metadata["apiKey"]
+	methodID := env.Metadata["methodId"]
+	providerName := env.Metadata["providerName"]
+	providerPaymentID := env.Metadata["providerPaymentId"]
+	providerPaymentTime := env.Metadata["providerPaymentTime"]
+	organizationID := env.Metadata["organizationId"]
 
-	// Check if the length of the input is valid
-	if len(code) != length {
-		return false
-	}
-
-	// Separate the base number (neid) and the check digit (ncrc)
-	neid := code[:length-1]
-	ncrc, err := strconv.Atoi(code[length-1:])
-	if err != nil {
-		return false
-	}
-
-	// Reverse the neid string
-	reversedNeid := reverseString(neid)
-
-	// Calculate the checksum
-	sum := 0
-	for i := 0; i < len(reversedNeid); i++ {
-		digit, _ := strconv.Atoi(string(reversedNeid[i]))
-		if i%2 == 0 { // Odd positions (in the reversed string)
-			digit *= 2
-			if digit > 9 {
-				digit -= 9
-			}
-		}
-		sum += digit
-	}
-
-	// Compute the expected check digit
-	crc := (10 - (sum % 10)) % 10
-
-	// Check if the computed check digit matches the provided one
-	return crc == ncrc
+	return ucrm.NewClient(billingURL, apiKey, c.dClient, ucrm.PaymentProvider{
+		MethodID:       methodID,
+		Name:           providerName,
+		PaymentID:      providerPaymentID,
+		PaymentTime:    providerPaymentTime,
+		OrganizationID: organizationID,
+	})
 }
 
-// reverseString reverses the input string
-func reverseString(s string) string {
-	var sb strings.Builder
-	for i := len(s) - 1; i >= 0; i-- {
-		sb.WriteByte(s[i])
-	}
-	return sb.String()
+// IsTelcoNGContractCode validates the provided code using the checksum algorithm.
+// A valid code must be 7 digits with a valid Luhn checksum as the last digit.
+// Delegates to epay.IsContractCode.
+func IsTelcoNGContractCode(code string) bool {
+	return epay.IsContractCode(code)
 }

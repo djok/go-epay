@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+*.exe
+*.test
+*.out
+
+# Environment files (don't include secrets in image)
+.env
+.env.local
+.env.*.local
+
+# Documentation
+docs/
+
+# Testing
+*_test.go
+coverage.out
+
+# GAE specific (not needed for Docker)
+cmd/goepay/app.yaml
+
+# Docker files (not needed inside container)
+Dockerfile
+docker-compose.yml
+.dockerignore

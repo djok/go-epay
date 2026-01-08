@@ -8,8 +8,6 @@ import (
 	"github.com/clouway/go-epay/pkg/client/ucrm"
 	"github.com/clouway/go-epay/pkg/epay"
 	"golang.org/x/oauth2/google"
-
-	"cloud.google.com/go/datastore"
 )
 
 // BillingSystem represents the billing system type
@@ -25,22 +23,22 @@ const (
 // NewClientFactory creates a new Factory for Client creation.
 // This is the legacy constructor for GAE deployments that uses automatic
 // billing system detection based on IDN format.
-func NewClientFactory(dClient *datastore.Client) epay.ClientFactory {
-	return &clientFactory{dClient: dClient}
+func NewClientFactory(poStore epay.PaymentOrderStore) epay.ClientFactory {
+	return &clientFactory{poStore: poStore}
 }
 
 // NewClientFactoryWithBillingSystem creates a new Factory that uses the specified
 // billing system for all requests. This is used for Docker deployments where the
 // billing system is configured via environment variables.
-func NewClientFactoryWithBillingSystem(dClient *datastore.Client, billingSystem BillingSystem) epay.ClientFactory {
+func NewClientFactoryWithBillingSystem(poStore epay.PaymentOrderStore, billingSystem BillingSystem) epay.ClientFactory {
 	return &clientFactory{
-		dClient:       dClient,
+		poStore:       poStore,
 		billingSystem: billingSystem,
 	}
 }
 
 type clientFactory struct {
-	dClient       *datastore.Client
+	poStore       epay.PaymentOrderStore
 	billingSystem BillingSystem
 }
 
@@ -94,7 +92,7 @@ func (c *clientFactory) createUCRMClient(env epay.Environment) epay.Client {
 	providerPaymentTime := env.Metadata["providerPaymentTime"]
 	organizationID := env.Metadata["organizationId"]
 
-	return ucrm.NewClient(billingURL, apiKey, c.dClient, ucrm.PaymentProvider{
+	return ucrm.NewClient(billingURL, apiKey, c.poStore, ucrm.PaymentProvider{
 		MethodID:       methodID,
 		Name:           providerName,
 		PaymentID:      providerPaymentID,

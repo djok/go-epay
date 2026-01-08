@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   goepay:
-    build: .
+    image: djok/go-epay:latest
     ports:
       - "8090:8090"
     env_file:
@@ -17,7 +17,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    restart: unless-stopped
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Cloudflare Tunnel for secure external access
   cloudflared:
@@ -26,8 +31,14 @@ services:
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
-      - goepay
-    restart: unless-stopped
+      goepay:
+        condition: service_healthy
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   goepay-data:

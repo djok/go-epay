@@ -49,7 +49,7 @@ func TestValidate(t *testing.T) {
 			"5160783",
 		}
 		for _, code := range testCases {
-			if !isTelcoNGContractCode(code) {
+			if !IsTelcoNGContractCode(code) {
 				t.Fatalf("expected %s to be valid", code)
 			}
 		}

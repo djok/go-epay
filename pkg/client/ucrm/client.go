@@ -14,11 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/clouway/go-epay/pkg/epay"
-
-	"cloud.google.com/go/datastore"
 )
-
-const poKind = "PaymentOrder"
 
 // PaymentProvider is keeping the configured payment provider in UCRM.
 type PaymentProvider struct {
@@ -30,14 +26,14 @@ type PaymentProvider struct {
 }
 
 // NewClient creates a new client that uses the provided app key and baseURL.
-func NewClient(baseURL *url.URL, appKey string, dClient *datastore.Client, paymentProvider PaymentProvider) epay.Client {
-	return &client{BaseURL: baseURL, AppKey: appKey, dClient: dClient, paymentProvider: paymentProvider}
+func NewClient(baseURL *url.URL, appKey string, poStore epay.PaymentOrderStore, paymentProvider PaymentProvider) epay.Client {
+	return &client{BaseURL: baseURL, AppKey: appKey, poStore: poStore, paymentProvider: paymentProvider}
 }
 
 type client struct {
 	BaseURL         *url.URL
 	AppKey          string
-	dClient         *datastore.Client
+	poStore         epay.PaymentOrderStore
 	paymentProvider PaymentProvider
 }
 
@@ -108,9 +104,7 @@ func (c *client) CreatePaymentOrder(ctx context.Context, createReq epay.CreatePa
 		return nil, err
 	}
 
-	k := datastore.NameKey(poKind, createReq.TransactionID, nil)
-
-	po := &paymentOrder{
+	po := &epay.PaymentOrderRecord{
 		CustomerName:  duties.CustomerName,
 		ClientID:      duties.CustomerRef,
 		TransactionID: createReq.TransactionID,
@@ -120,13 +114,13 @@ func (c *client) CreatePaymentOrder(ctx context.Context, createReq epay.CreatePa
 		InvoiceIDs:    duties.DocumentIDs,
 	}
 
-	if _, err := c.dClient.Put(ctx, k, po); err != nil {
+	if err := c.poStore.Put(ctx, po); err != nil {
 		contextLogger.Printf("got error: %v", err)
 		return nil, epay.ErrUnknown
 	}
 
 	return &epay.PaymentOrder{
-		ID:            k.Name,
+		ID:            po.TransactionID,
 		CustomerName:  po.CustomerName,
 		TransactionID: po.TransactionID,
 		Amount:        epay.Amount{Value: po.Amount},
@@ -136,15 +130,13 @@ func (c *client) CreatePaymentOrder(ctx context.Context, createReq epay.CreatePa
 }
 
 func (c *client) GetPaymentOrder(ctx context.Context, orderKey string) (*epay.PaymentOrder, error) {
-	k := datastore.NameKey(poKind, orderKey, nil)
-
-	po := &paymentOrder{}
-	if err := c.dClient.Get(ctx, k, po); err != nil {
-		return nil, epay.ErrPaymentOrderNotFound
+	po, err := c.poStore.Get(ctx, orderKey)
+	if err != nil {
+		return nil, err
 	}
 
 	return &epay.PaymentOrder{
-		ID:            fmt.Sprintf("%d", k.ID),
+		ID:            po.TransactionID,
 		CustomerName:  po.CustomerName,
 		TransactionID: po.TransactionID,
 		Amount:        epay.Amount{Value: po.Amount},
@@ -153,10 +145,8 @@ func (c *client) GetPaymentOrder(ctx context.Context, orderKey string) (*epay.Pa
 }
 
 func (c *client) PayPaymentOrder(ctx context.Context, orderID string) (*epay.PayPaymentOrderResponse, error) {
-	k := datastore.NameKey(poKind, orderID, nil)
-
-	po := &paymentOrder{}
-	if err := c.dClient.Get(ctx, k, po); err != nil {
+	po, err := c.poStore.Get(ctx, orderID)
+	if err != nil {
 		return nil, epay.ErrPaymentOrderNotFound
 	}
 
@@ -186,7 +176,7 @@ func (c *client) PayPaymentOrder(ctx context.Context, orderID string) (*epay.Pay
 	}
 
 	po.ProcessedOn = time.Now()
-	if _, err := c.dClient.Put(ctx, k, po); err != nil {
+	if err := c.poStore.Put(ctx, po); err != nil {
 		log.Printf("got error: %v", err)
 		return nil, epay.ErrUnknown
 	}
@@ -317,17 +307,6 @@ type invoice struct {
 
 type invoiceItem struct {
 	Label string `json:"label"`
-}
-
-type paymentOrder struct {
-	SubscriberID  string    `datastore:"subscriberId,noindex"`
-	CustomerName  string    `datastore:"customerName,noindex"`
-	ClientID      string    `datastore:"clientID,noindex"`
-	TransactionID string    `datastore:"transactionId,noindex"`
-	Amount        string    `datastore:"amount,noindex"`
-	CreatedAt     time.Time `datastore:"createdOn,noindex"`
-	ProcessedOn   time.Time `datastore:"processedOn,omitempty"`
-	InvoiceIDs    []string  `datastore:"invoiceIds,noindex"`
 }
 
 type paymentRequest struct {

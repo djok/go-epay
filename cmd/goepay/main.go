@@ -13,6 +13,7 @@ import (
 	"github.com/clouway/go-epay/pkg/server/db"
 	"github.com/clouway/go-epay/pkg/server/env"
 	"github.com/clouway/go-epay/pkg/server/middleware"
+	"github.com/clouway/go-epay/pkg/server/sqlite"
 
 	"cloud.google.com/go/datastore"
 	"github.com/gorilla/mux"
@@ -26,7 +27,6 @@ func main() {
 
 	var envStore epay.EnvironmentStore
 	var cf epay.ClientFactory
-	var dClient *datastore.Client
 
 	if projectID != "" {
 		// GAE Mode: Use Datastore for configuration
@@ -37,14 +37,14 @@ func main() {
 		)
 		log.SetFormatter(formatter)
 
-		var err error
-		dClient, err = datastore.NewClient(ctx, projectID)
+		dClient, err := datastore.NewClient(ctx, projectID)
 		if err != nil {
 			log.Fatalf("Failed to create datastore client: %v", err)
 		}
 
 		envStore = db.NewEnvironmentStore(dClient)
-		cf = client.NewClientFactory(dClient)
+		poStore := db.NewPaymentOrderStore(dClient)
+		cf = client.NewClientFactory(poStore)
 	} else {
 		// Docker Mode: Use environment variables for configuration
 		log.Info("Running in Docker mode with environment variable configuration")
@@ -60,16 +60,23 @@ func main() {
 			billingSystem = client.BillingSystemTelcoNG // Default to TelcoNG
 		}
 
-		// Check if Datastore emulator is configured (needed for UCRM)
-		if emulatorHost := os.Getenv("DATASTORE_EMULATOR_HOST"); emulatorHost != "" {
-			var err error
-			dClient, err = datastore.NewClient(ctx, "docker-local")
-			if err != nil {
-				log.Warnf("Could not connect to Datastore emulator: %v", err)
-			}
+		// Create SQLite store for PaymentOrders (used by UCRM)
+		dbPath := os.Getenv("SQLITE_DB_PATH")
+		if dbPath == "" {
+			dbPath = "/app/data/payment_orders.db"
 		}
 
-		cf = client.NewClientFactoryWithBillingSystem(dClient, billingSystem)
+		var poStore epay.PaymentOrderStore
+		if billingSystem == client.BillingSystemUCRM {
+			var err error
+			poStore, err = sqlite.NewPaymentOrderStore(dbPath)
+			if err != nil {
+				log.Fatalf("Failed to create SQLite store: %v", err)
+			}
+			log.Infof("Using SQLite database at: %s", dbPath)
+		}
+
+		cf = client.NewClientFactoryWithBillingSystem(poStore, billingSystem)
 		log.Infof("Billing system configured: %s", billingSystem)
 	}
 
